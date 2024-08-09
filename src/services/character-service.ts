@@ -398,13 +398,21 @@ export class CharacterManager {
       responseText += `, `
       responseText += `${ancestry}`
     })
+    let res = await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
+
     if (character.level > 1) {
+      let j = 0
+      let responseText2 = "Additional options: "
       RARE_ANCESTRIES.forEach((ancestry) => {
-        responseText += `, `
-        responseText += `${ancestry}`
+        if (j > 0) {
+          responseText2 += `, `
+        }
+        responseText2 += `${ancestry}`
+        j += 1
       })
+      await postReply(responseText2, res.uri, res.cid, rootUri, rootCid, this.agent)
     }
-    await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
+
     return
   }
 

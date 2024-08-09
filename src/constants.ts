@@ -8,7 +8,7 @@ export const COMMON_ANCESTRIES = ['dwarf', 'elf', 'gnome', 'goblin', 'halfling',
 export const UNCOMMON_ANCESTRIES = ['azarketi', 'catfolk', 'fetchling', 'gnoll', 'grippli',
   'hobgoblin', 'kitsune', 'kobold', 'lizardfolk', 'nagaji', 'ratfolk', 'tengu', 'vanara']
 
-export const RARE_ANCESTRIES = ['android', ' tiefling']
+export const RARE_ANCESTRIES = ['android', 'tiefling']
 
 export const LEVEL_THRESHOLDS = {
   1: 0,
