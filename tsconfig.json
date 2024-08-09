@@ -6,7 +6,7 @@
     ],
     "outDir": "dist",
     "module": "CommonJS",
-    "target": "ES6",
+    "target": "ES2022",
     "esModuleInterop": true,
     "moduleResolution": "node",
     "alwaysStrict": true,
