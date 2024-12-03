@@ -5,6 +5,9 @@ export type TtrpgSchema = {
   duel: Duel
   ancestry: Ancestry
   class: Class
+  questing_party: QuestingParty
+  questing_party_member: QuestingPartyMember
+  questing_party_invite: QuestingPartyInvite
 }
 
 export type FirehoseSchema = {
@@ -26,6 +29,7 @@ export type Post = {
   uri: string
   cid: string
   author: string
+  lang: string | null
   parentUri: string | null
   parentCid: string | null
   rootUri: string
@@ -74,6 +78,7 @@ export type Duel = {
   created_at: string | null,
   root_uri: string | null,
   root_cid: string | null,
+  lang: string | null,
 }
 
 export type Ancestry = {
@@ -84,4 +89,21 @@ export type Ancestry = {
 export type Class = {
   name: string
   description: string
+}
+
+export type QuestingParty = {
+  party_id: string
+  party_leader: string
+  party_size: number
+}
+
+export type QuestingPartyMember = {
+  party_id: string
+  character: string
+}
+export type QuestingPartyInvite = {
+  party_id: string
+  character: string
+  invite_id: string
+  status: number
 }

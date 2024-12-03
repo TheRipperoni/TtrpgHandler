@@ -1,54 +1,91 @@
 import { TtrpgRequest } from '../vo/ttrpgRequest'
-import { did, getProfile, postReply } from '../agent'
-import { Character, Reroll } from '../db/schema'
+import { did, getProfile, postReplyWithLang } from '../agent'
+import { Character, Duel, QuestingParty, QuestingPartyInvite, Reroll } from '../db/schema'
 import { AppBskyActorGetProfile, BskyAgent, Label } from '@atproto/api'
 import {
-  ALREADY_UNSUBBED_TEXT,
-  ANCESTRY_ALREADY_CHOSEN_TEXT,
-  CHALLENGED_GM_TEXT, CHALLENGED_NOT_ENOUGH_GOLD_PENDING_TEXT, CHALLENGED_NOT_ENOUGH_GOLD_TEXT,
-  CHALLENGED_NOT_SUBSCRIBED_TEXT,
+  ACCEPT_DUELIST_NO_CHARACTER,
+  ACCEPT_PARTY_INVITE_NO_CHARACTER,
+  ACCEPT_RECIPIENT_NO_CHARACTER,
+  ALREADY_UNSUBBED_TEXT, CHALLENGED_GM_TEXT, CHALLENGED_NOT_SUBSCRIBED_TEXT,
   CHARACTER_IS_ACTIVE_TEXT,
   CHARACTER_IS_DEACTIVATED_TEXT,
   CLASS_LABELS,
-  COMMON_ANCESTRIES, DONOR_NOT_ENOUGH_GOLD_TEXT, DONOR_NOT_SUBSCRIBED_TEXT,
+  CLASS_LABELS_LOCALE,
+  COMMON_ANCESTRIES,
+  COMMON_ANCESTRIES_LOCALE,
+  CREATE_PARTY_ERROR,
+  DONATION_ERROR,
+  DONATION_SUCCESSFUL,
+  DONOR_NOT_ENOUGH_GOLD_TEXT,
+  DONOR_NOT_SUBSCRIBED_TEXT,
+  DUEL_ALREADY_RESOLVED_TEXT,
+  DUEL_ERROR,
+  DUEL_INITIATED, DUEL_SUCCESSFULLY_CANCELLED_TEXT,
+  DUEL_WINNER,
   FIRST_REROLL_TEXT,
-  GENERIC_ERROR_TEXT, INITIATOR_NOT_ENOUGH_GOLD_PENDING_TEXT,
-  INITIATOR_NOT_ENOUGH_GOLD_TEXT,
-  INITIATOR_NOT_SUBSCRIBED_TEXT,
+  GENERIC_ERROR_TEXT,
+  GET_STATS_P1, INITIATOR_NOT_SUBSCRIBED_TEXT,
   INVALID_DUEL_GOLD_TEXT,
+  INVITE_ERROR,
+  JOUST_ALREADY_RESOLVED_TEXT,
+  JOUST_SUCCESSFULLY_CANCELLED_TEXT,
   LEVEL_THRESHOLDS,
+  LIST_ANCESTRIES_ADDITIONAL_OPTIONS,
   LIST_ANCESTRIES_TEMPLATE,
+  LIST_ANCESTRIES_UNEXPECTED_ERROR,
+  LIST_COMMANDS_ERROR,
   LIST_COMMANDS_TEXT_P1,
-  LIST_COMMANDS_TEXT_P2, LIST_COMMANDS_TEXT_P3,
+  LIST_COMMANDS_TEXT_P2,
+  LIST_COMMANDS_TEXT_P3,
   MAX_REROLLS_REACHED_TEXT,
   NOT_DEACTIVATED_TEXT,
-  NOT_SUBSCRIBED_TEXT, RARE_ANCESTRIES, RECIPIENT_NOT_SUBSCRIBED_TEXT,
+  NOT_PARTY_LEADER_TEXT,
+  NOT_SUBSCRIBED_TEXT,
+  PARTY_CREATED_SUCCESSFUL,
+  PARTY_INVITE_ACCEPTED_TEXT,
+  PARTY_INVITE_CREATED,
+  PARTY_NOT_EXIST_TEXT,
+  PARTY_SIZE_LIMIT_REACHED_TEXT,
+  RARE_ANCESTRIES,
+  RARE_ANCESTRIES_LOCALE,
+  RECIPIENT_NOT_SUBSCRIBED_TEXT,
+  SAME_CLASS_TWICE,
   SECOND_REROLL_TEXT,
-  SECONDARY_CLASS_ALREADY_CHOSEN_TEXT,
-  SELF_CHALLENGED_TEXT, SELF_DONOR_TEXT,
+  SECONDARY_CLASS_ALREADY_CHOSEN_TEXT, SELF_CHALLENGED_TEXT,
+  SELF_DONOR_TEXT,
   SUCCESSFULLY_RESUBBED_TEXT,
-  SUCCESSFULLY_UNSUBBED_TEXT, UNCOMMON_ANCESTRIES,
+  SUCCESSFULLY_UNSUBBED_TEXT,
+  UNCOMMON_ANCESTRIES,
+  UNCOMMON_ANCESTRIES_LOCALE,
+  USER_NOT_SUBSCRIBED_TEXT,
 } from '../constants'
 import {
+  acceptPartyInviteDb, cancelPartyInviteFromDb,
   CharacterAlreadyExistsError,
   CharacterNotFoundError,
   chooseAncestryForCharacter,
-  createCharacterDB,
+  createCharacterDB, createPartyDb, createPartyInviteDb,
   deactivateCharInDb,
   fetchRerollsFromDB,
-  getCharacterFromDB,
+  getCharacterFromDB, getPartyFromDB, getPartyInviteFromDB,
   insertRerollAttemptIntoDB,
-  levelUpCharInDB,
+  levelUpCharInDB, PartyNotFoundError,
   reactivateCharInDb, transferGoldInDB,
   updateCharacterClass,
   updateSecondaryClassForCharacter,
 } from '../helpers/character'
 import { emitNewLabel, emitOverideLabel, emitRemovalLabel } from '../util/ozone-util'
-import { cancelOutstandingDuels, getCharacterAllocatedGold } from '../helpers/duel'
+import {
+  cancelDuelFromDB,
+  cancelOutstandingDuels,
+  createDuelInDb,
+  DuelNotFound,
+  getCharacterAllocatedGold, resolveDuel,
+} from '../helpers/duel'
 import crypto from 'crypto'
 import { TtrpgDatabase } from '../db'
 import { logger } from '../util/logger'
-import { CHAR_DEACTIVATED } from '../db/constants'
+import { CHAR_DEACTIVATED, DUEL_TYPE, JOUST_CANCELED, JOUST_RESOLVED } from '../db/constants'
 
 export class CharacterManager {
   constructor(
@@ -70,7 +107,6 @@ export class CharacterManager {
     let indexAnswer = parseInt(hexAnswer, 16) % CLASS_LABELS.length
     let chosenLabel: string = CLASS_LABELS.at(indexAnswer)!
 
-
     try {
       await this.createCharacter(subject, chosenLabel)
     } catch (e) {
@@ -87,39 +123,60 @@ export class CharacterManager {
     const subject = req.author
     const cid = req.cid
     const uri = req.uri
+    const lang = req.lang
     const rootCid = req.rootCid
     const rootUri = req.rootUri
 
     const profile = await getProfile(this.agent, subject)
     const existingLabel = await this.getCharacterClassLabel(profile)
     if (existingLabel === undefined) {
-      await postReply(NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
     let character = await this.getCharacter(subject)
     if (character === null) {
-      await postReply(NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
-    let responseText: string = `Your current stats`
+    let responseText = GET_STATS_P1[lang]
 
     if (character.secondary_class === null) {
-      responseText += `\nClass: ${character.class}`
+      if (lang == 'pt') {
+        responseText += `\nClasse: ${character.class}`
+      } else {
+        responseText += `\nClass: ${character.class}`
+      }
     } else {
-      responseText += `\nPrimary Class: ${character.class}\nSecondary Class: ${character.secondary_class}`
+      if (lang == 'pt') {
+        responseText += `\nClasse primária:${character.class}\nClasse secundária:${character.secondary_class}`
+      } else {
+        responseText += `\nPrimary Class: ${character.class}\nSecondary Class: ${character.secondary_class}`
+      }
     }
     if (character.ancestry !== null) {
-      responseText += `\nAncestry: ${character.ancestry}`
+      if (lang == 'pt') {
+        responseText += `\nAncestrais: ${character.ancestry}`
+      } else {
+        responseText += `\nAncestry: ${character.ancestry}`
+      }
     }
-    responseText += `\nLevel: ${character.level}\nExperience: ${character.experience}\nGold: ${character.gold}`
+    if (lang == 'pt') {
+      responseText += `\nNível: ${character.level}\nExperiência: ${character.experience}\nOuro: ${character.gold}`
+    } else {
+      responseText += `\nLevel: ${character.level}\nExperience: ${character.experience}\nGold: ${character.gold}`
+    }
 
-    await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
+    await postReplyWithLang(responseText, uri, cid, rootUri, rootCid, lang, this.agent)
   }
 
   async levelUp(character: Character, displayName: string, uri: string, cid: string,
-    rootUri: string, rootCid: string,
+    rootUri: string, rootCid: string, lang: string,
   ): Promise<boolean> {
     const exp = character.experience
     const level = character.level
@@ -136,8 +193,13 @@ export class CharacterManager {
       return false
     }
 
-    const responseText = `Congratulations ${displayName}, you have leveled up to level ${level + 1}!`
-    await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
+    let responseText: string
+    if (lang == 'pt') {
+      responseText = `Parabéns ${displayName}, você subiu de nível para o nível ${level + 1}!`
+    } else {
+      responseText = `Congratulations ${displayName}, you have leveled up to level ${level + 1}!`
+    }
+    await postReplyWithLang(responseText, uri, cid, rootUri, rootCid, lang, this.agent)
     return true
   }
 
@@ -165,10 +227,35 @@ export class CharacterManager {
     }
   }
 
+  async getPartyInvite(uri: string): Promise<QuestingPartyInvite | null> {
+    try {
+      return await getPartyInviteFromDB(this.db, uri)
+    } catch (e) {
+      if (e instanceof PartyNotFoundError) {
+        return null
+      } else {
+        throw e
+      }
+    }
+  }
+
+  async getParty(party_id: string): Promise<QuestingParty | null> {
+    try {
+      return await getPartyFromDB(this.db, party_id)
+    } catch (e) {
+      if (e instanceof PartyNotFoundError) {
+        return null
+      } else {
+        throw e
+      }
+    }
+  }
+
   async chooseAncestry(req: TtrpgRequest) {
     const subject = req.author
     const cid = req.cid
     const uri = req.uri
+    const lang = req.lang
     const rootCid = req.rootCid
     const rootUri = req.rootUri
     const text = req.text.toLowerCase()
@@ -179,12 +266,16 @@ export class CharacterManager {
     const label = await this.getCharacterClassLabel(profile)
 
     if (label === undefined) {
-      await postReply(NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
     if (character === null) {
-      await postReply(NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
@@ -197,32 +288,59 @@ export class CharacterManager {
     const splitText = text.split(/\s+/)
     const chosenAncestry = splitText[2]
 
-    if (!COMMON_ANCESTRIES.includes(chosenAncestry) && !UNCOMMON_ANCESTRIES.includes(chosenAncestry)) {
-      if(character.level < 2 || !RARE_ANCESTRIES.includes(chosenAncestry) ) {
-        let responseText = `${chosenAncestry} is not a valid ancestry to choose from.`
-        await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
+    if (!COMMON_ANCESTRIES_LOCALE[lang].includes(
+      chosenAncestry) && !UNCOMMON_ANCESTRIES_LOCALE[lang].includes(chosenAncestry)) {
+      if (character.level < 2 || !RARE_ANCESTRIES_LOCALE[lang].includes(chosenAncestry)) {
+        let responseText: string
+        if (lang == 'pt') {
+          responseText = `${chosenAncestry} não é um ancestral válido para escolher.`
+        } else {
+          responseText = `${chosenAncestry} is not a valid ancestry to choose from.`
+        }
+        await postReplyWithLang(responseText, uri, cid, rootUri, rootCid, lang, this.agent)
         return
       }
     }
 
+    let new_ancestry: string
+    let i = COMMON_ANCESTRIES_LOCALE[lang].indexOf(chosenAncestry)
+    if (i !== -1) {
+      new_ancestry = COMMON_ANCESTRIES.at(i) ?? 'error'
+    } else {
+      i = UNCOMMON_ANCESTRIES_LOCALE[lang].indexOf(chosenAncestry)
+      if (i !== -1) {
+        new_ancestry = UNCOMMON_ANCESTRIES.at(i) ?? 'error'
+      } else {
+        i = RARE_ANCESTRIES_LOCALE[lang].indexOf(chosenAncestry)
+        new_ancestry = RARE_ANCESTRIES.at(i) ?? 'error'
+      }
+    }
     if (character.ancestry !== null) {
       await emitRemovalLabel(this.agent, subject, [character.ancestry])
     }
-    await emitNewLabel(this.agent, subject, chosenAncestry)
-    await chooseAncestryForCharacter(this.db, subject, chosenAncestry)
+    await emitNewLabel(this.agent, subject, new_ancestry)
+    await chooseAncestryForCharacter(this.db, subject, new_ancestry)
 
     let responseText: string
-    if ('aeiou'.includes(chosenAncestry.charAt(0))) {
-      responseText = `Congratulations, you are now an ${chosenAncestry}.`
+    if (lang == 'pt') {
+      responseText = `Parabéns, agora você é um ${chosenAncestry}.`
     } else {
-      responseText = `Congratulations, you are now a ${chosenAncestry}.`
+      if ('aeiou'.includes(chosenAncestry.charAt(0))) {
+        //Parabéns, agora você é um
+        responseText = `Congratulations, you are now an ${chosenAncestry}.`
+      } else {
+        //Parabéns, agora você é um
+        responseText = `Congratulations, you are now a ${chosenAncestry}.`
+      }
     }
-    await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
+
+    await postReplyWithLang(responseText, uri, cid, rootUri, rootCid, lang, this.agent)
   }
 
   async chooseSecondaryClass(req: TtrpgRequest) {
     const subject = req.author
     const cid = req.cid
+    const lang = req.lang
     const uri = req.uri
     const rootCid = req.rootCid
     const rootUri = req.rootUri
@@ -231,43 +349,64 @@ export class CharacterManager {
     let character = await this.getCharacter(subject)
 
     if (character === null) {
-      await postReply(NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
     if (character.status === CHAR_DEACTIVATED) {
-      await postReply(CHARACTER_IS_DEACTIVATED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(CHARACTER_IS_DEACTIVATED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
     if (character.secondary_class !== null) {
-      await postReply(SECONDARY_CLASS_ALREADY_CHOSEN_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(SECONDARY_CLASS_ALREADY_CHOSEN_TEXT[lang], uri, cid, rootUri, rootCid,
+        lang, this.agent,
+      )
       return
     }
 
     const splitText = text.split(/\s+/)
     const chosenClass = splitText[2]
 
-    if (!CLASS_LABELS.includes(chosenClass)) {
-      let responseText = `${chosenClass} is not a valid class to choose from.`
-      await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
-      return
-    }
-    if (character.class == chosenClass) {
-      let responseText = `You cannot choose the same class twice.`
-      await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
+    if (!CLASS_LABELS_LOCALE[lang].includes(chosenClass)) {
+      let responseText: string
+      if (lang == 'pt') {
+        responseText = `${chosenClass} não é uma classe válida para escolher.`
+      } else {
+        responseText = `${chosenClass} is not a valid class to choose from.`
+      }
+      await postReplyWithLang(responseText, uri, cid, rootUri, rootCid, lang, this.agent)
       return
     }
 
-    await emitNewLabel(this.agent, subject, chosenClass)
-    await updateSecondaryClassForCharacter(this.db, subject, chosenClass)
+    let new_class: string
+    let i = CLASS_LABELS_LOCALE[lang].indexOf(chosenClass)
+    new_class = CLASS_LABELS.at(i) ?? 'error'
+
+    if (character.class == new_class) {
+      await postReplyWithLang(SAME_CLASS_TWICE[lang], uri, cid, rootUri, rootCid, lang, this.agent)
+      return
+    }
+
+    await emitNewLabel(this.agent, subject, new_class)
+    await updateSecondaryClassForCharacter(this.db, subject, new_class)
 
     let responseText: string
-    if ('aeiou'.includes(character.class.charAt(0))) {
-      responseText = `Congratulations, you are now an ${character.class}/${chosenClass}.`
+    if (lang == 'pt') {
+      responseText = `Parabéns, agora você é um ${character.class}/${chosenClass}.`
     } else {
-      responseText = `Congratulations, you are now a ${character.class}/${chosenClass}.`
+      if ('aeiou'.includes(character.class.charAt(0))) {
+        //Parabéns, agora você é um
+        responseText = `Congratulations, you are now an ${character.class}/${chosenClass}.`
+      } else {
+        //Parabéns, agora você é um
+        responseText = `Congratulations, you are now a ${character.class}/${chosenClass}.`
+      }
     }
-    await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
+    await postReplyWithLang(responseText, uri, cid, rootUri, rootCid, lang, this.agent)
   }
 
   /**
@@ -300,6 +439,7 @@ export class CharacterManager {
   async unsubscribe(req: TtrpgRequest) {
     const subject = req.author
     const cid = req.cid
+    const lang = req.lang
     const uri = req.uri
     const rootCid = req.rootCid
     const rootUri = req.rootUri
@@ -312,7 +452,9 @@ export class CharacterManager {
       await deactivateCharInDb(this.db, subject)
     } else {
       if (existingLabels.length === 0) {
-        await postReply(ALREADY_UNSUBBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+        await postReplyWithLang(ALREADY_UNSUBBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+          this.agent,
+        )
         return
       }
     }
@@ -325,25 +467,32 @@ export class CharacterManager {
 
     await cancelOutstandingDuels(this.db, subject)
     await emitRemovalLabel(this.agent, subject, labelsToRemove)
-    await postReply(SUCCESSFULLY_UNSUBBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+    await postReplyWithLang(SUCCESSFULLY_UNSUBBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+      this.agent,
+    )
   }
 
   async resubscribe(req: TtrpgRequest) {
     const subject = req.author
     const cid = req.cid
     const uri = req.uri
+    const lang = req.lang
     const rootCid = req.rootCid
     const rootUri = req.rootUri
 
     let character = await this.getCharacter(subject)
 
     if (character === null) {
-      await postReply(NOT_DEACTIVATED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(NOT_DEACTIVATED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
     if (character.status === 1) {
-      await postReply(CHARACTER_IS_ACTIVE_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(CHARACTER_IS_ACTIVE_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
@@ -360,12 +509,15 @@ export class CharacterManager {
       await emitNewLabel(this.agent, subject, character.secondary_class)
     }
 
-    await postReply(SUCCESSFULLY_RESUBBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+    await postReplyWithLang(SUCCESSFULLY_RESUBBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+      this.agent,
+    )
   }
 
   async listAncestries(req: TtrpgRequest) {
     const cid = req.cid
     const uri = req.uri
+    const lang = req.lang
     const rootCid = req.rootCid
     const rootUri = req.rootUri
 
@@ -374,43 +526,46 @@ export class CharacterManager {
       character = await this.getCharacter(req.author)
     } catch (e) {
       logger.error(`Error encountered: ${e.message}`)
-      await postReply('Unexpected error encountered', req.uri, req.cid, req.rootUri, req.rootCid,
-        this.agent,
+      await postReplyWithLang(LIST_ANCESTRIES_UNEXPECTED_ERROR[lang], req.uri, req.cid, req.rootUri,
+        req.rootCid,
+        lang, this.agent,
       )
       return
     }
 
     if (character === null) {
-      await postReply(NOT_SUBSCRIBED_TEXT, req.uri, req.cid, req.rootUri, req.rootCid, this.agent)
+      await postReplyWithLang(NOT_SUBSCRIBED_TEXT[lang], req.uri, req.cid, req.rootUri, req.rootCid,
+        lang, this.agent,
+      )
       return
     }
 
-    let responseText = LIST_ANCESTRIES_TEMPLATE
+    let responseText = LIST_ANCESTRIES_TEMPLATE[lang]
     let i = 0
-    COMMON_ANCESTRIES.forEach((ancestry) => {
+    COMMON_ANCESTRIES_LOCALE[lang].forEach((ancestry) => {
       if (i > 0) {
         responseText += `, `
       }
       responseText += `${ancestry}`
       i += 1
     })
-    UNCOMMON_ANCESTRIES.forEach((ancestry) => {
+    UNCOMMON_ANCESTRIES_LOCALE[lang].forEach((ancestry) => {
       responseText += `, `
       responseText += `${ancestry}`
     })
-    let res = await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
+    let res = await postReplyWithLang(responseText, uri, cid, rootUri, rootCid, lang, this.agent)
 
     if (character.level > 1) {
       let j = 0
-      let responseText2 = "Additional options: "
-      RARE_ANCESTRIES.forEach((ancestry) => {
+      let responseText2 = LIST_ANCESTRIES_ADDITIONAL_OPTIONS[lang]
+      RARE_ANCESTRIES_LOCALE[lang].forEach((ancestry) => {
         if (j > 0) {
           responseText2 += `, `
         }
         responseText2 += `${ancestry}`
         j += 1
       })
-      await postReply(responseText2, res.uri, res.cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(responseText2, res.uri, res.cid, rootUri, rootCid, lang, this.agent)
     }
 
     return
@@ -418,6 +573,7 @@ export class CharacterManager {
 
   async listCommands(req: TtrpgRequest) {
     const cid = req.cid
+    const lang = req.lang
     const uri = req.uri
     const rootCid = req.rootCid
     const rootUri = req.rootUri
@@ -427,26 +583,288 @@ export class CharacterManager {
       character = await this.getCharacter(req.author)
     } catch (e) {
       logger.error(`Error encountered: ${e.message}`)
-      await postReply('Unexpected error encountered', req.uri, req.cid, req.rootUri, req.rootCid,
-        this.agent,
+      await postReplyWithLang(LIST_COMMANDS_ERROR[lang], req.uri, req.cid, req.rootUri,
+        req.rootCid,
+        lang, this.agent,
       )
       return
     }
 
     if (character === null) {
-      await postReply(NOT_SUBSCRIBED_TEXT, req.uri, req.cid, req.rootUri, req.rootCid, this.agent)
+      await postReplyWithLang(NOT_SUBSCRIBED_TEXT[lang], req.uri, req.cid, req.rootUri, req.rootCid,
+        lang, this.agent,
+      )
       return
     }
 
-    let res = await postReply(LIST_COMMANDS_TEXT_P1, uri, cid, rootUri, rootCid, this.agent)
-    res = await postReply(LIST_COMMANDS_TEXT_P2, res.uri, res.cid, rootUri, rootCid, this.agent)
-    res = await postReply(LIST_COMMANDS_TEXT_P3, res.uri, res.cid, rootUri, rootCid, this.agent)
+    let res = await postReplyWithLang(LIST_COMMANDS_TEXT_P1[lang], uri, cid, rootUri, rootCid, lang,
+      this.agent,
+    )
+    res = await postReplyWithLang(LIST_COMMANDS_TEXT_P2[lang], res.uri, res.cid, rootUri, rootCid,
+      lang, this.agent,
+    )
+    res = await postReplyWithLang(LIST_COMMANDS_TEXT_P3[lang], res.uri, res.cid, rootUri, rootCid,
+      lang, this.agent,
+    )
     return
+  }
+
+  async createParty(req: TtrpgRequest) {
+    const subject = req.author
+    const cid = req.cid
+    const lang = req.lang
+    const uri = req.uri
+    const rootCid = req.rootCid
+    const rootUri = req.rootUri
+
+    const profile1 = await getProfile(this.agent, subject)
+    const player1Label = await this.getCharacterClassLabel(profile1)
+    if (player1Label === undefined) {
+      await postReplyWithLang(DONOR_NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
+      return
+    }
+
+    let character1 = await this.getCharacter(subject)
+
+    if (character1 === null) {
+      await postReplyWithLang(USER_NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
+      return
+    }
+
+    try {
+      await createPartyDb(this.db, {
+        party_id: rootUri,
+        subject: subject,
+      })
+      await postReplyWithLang(PARTY_CREATED_SUCCESSFUL[lang], uri, cid, rootUri,
+        rootCid, lang, this.agent,
+      )
+
+    } catch (e) {
+      logger.error(`Error creating party: ${e.message}`)
+      await postReplyWithLang(CREATE_PARTY_ERROR[lang], uri, cid, rootUri,
+        rootCid, lang, this.agent,
+      )
+    }
+  }
+
+  async createPartyInvite(req: TtrpgRequest) {
+    const subject = req.author
+    const cid = req.cid
+    const lang = req.lang
+    const uri = req.uri
+    const rootCid = req.rootCid
+    const rootUri = req.rootUri
+
+    const profile1 = await getProfile(this.agent, subject)
+    const player1Label = await this.getCharacterClassLabel(profile1)
+    if (player1Label === undefined) {
+      await postReplyWithLang(DONOR_NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
+      return
+    }
+
+    let party = await this.getParty(rootUri)
+
+    if (party === null) {
+      await postReplyWithLang(PARTY_NOT_EXIST_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
+      return
+    } else if (party.party_leader != subject) {
+      await postReplyWithLang(NOT_PARTY_LEADER_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
+      return
+    } else if (party.party_leader != subject) {
+      await postReplyWithLang(NOT_PARTY_LEADER_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
+      return
+    } else if (party.party_size >= 4) {
+      await postReplyWithLang(PARTY_SIZE_LIMIT_REACHED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
+      return
+    }
+
+    const text = req.text
+
+    const splitText = text.split(/\s+/)
+
+    const challengedPlayerHandle = splitText[2].substring(1)
+
+    if (challengedPlayerHandle === 'bskyttrpg.bsky.social') {
+      await postReplyWithLang(CHALLENGED_GM_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
+      return
+    }
+
+    const profile2 = await getProfile(this.agent, challengedPlayerHandle)
+    const player2Label = await this.getCharacterClassLabel(profile2)
+    if (player2Label === undefined) {
+      await postReplyWithLang(CHALLENGED_NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid,
+        lang, this.agent,
+      )
+      return
+    }
+
+    if (subject == profile2.data.did) {
+      await postReplyWithLang(SELF_CHALLENGED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
+      return
+    }
+
+    let character2 = await this.getCharacter(profile2.data.did)
+
+    if (character2 === null) {
+      await postReplyWithLang(CHALLENGED_NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid,
+        lang, this.agent,
+      )
+      return
+    }
+
+    const replyResponse = await postReplyWithLang(PARTY_INVITE_CREATED[lang], uri, cid, rootUri,
+      rootCid, lang,
+      this.agent,
+    )
+
+    try {
+      await this.insertNewPartyInvite(profile2.data.did, rootUri, replyResponse.uri)
+    } catch (e) {
+      logger.error(`Error inserting new party invite: ${e.message}`)
+      await postReplyWithLang(INVITE_ERROR[lang], replyResponse.uri, replyResponse.cid, rootUri,
+        rootCid, lang, this.agent,
+      )
+    }
+  }
+
+  async insertNewPartyInvite(player: string, party_id: string, invite_id: string) {
+    await createPartyInviteDb(this.db, {
+      party_id: party_id,
+      subject: player,
+      invite_id: invite_id,
+    })
+  }
+
+  async acceptPartyInvite(req: TtrpgRequest) {
+    const subject = req.author
+    const cid = req.cid
+    const uri = req.uri
+    const lang = req.lang
+    const rootCid = req.rootCid
+    const rootUri = req.rootUri
+    const parentUri = req.parentUri
+
+    if (parentUri === undefined) {
+      return
+    }
+
+    let partyInvite: QuestingPartyInvite | null
+    try {
+      partyInvite = await this.getPartyInvite(parentUri)
+    } catch (e) {
+      if (e instanceof DuelNotFound) {
+        return
+      } else {
+        logger.error(
+          `Error encountered getting party invite in accept duel.\nReq: ${req}\nerror:${e.message}`)
+        return
+      }
+    }
+    if (partyInvite === null) {
+      return
+    }
+
+    //If user who posted accept isn't challenged or duel already resolved
+    if (partyInvite.character != subject) {
+      return
+    } else if (partyInvite.status != 0) {
+      return
+    }
+
+    const character1 = await this.getCharacter(subject)
+    if (character1 === null) {
+      await postReplyWithLang(ACCEPT_PARTY_INVITE_NO_CHARACTER[lang], uri, cid, rootUri, rootCid,
+        lang,
+        this.agent,
+      )
+      return
+    }
+
+    const replyResponse = await postReplyWithLang(PARTY_INVITE_ACCEPTED_TEXT[lang], uri, cid,
+      rootUri, rootCid, lang,
+      this.agent,
+    )
+
+    try {
+      await acceptPartyInviteDb(this.db, {
+        party_id: rootUri,
+        subject: subject,
+        invite_id: partyInvite.invite_id,
+      })
+    } catch (e) {
+      logger.error(`Error accepting new party invite: ${e.message}`)
+      await postReplyWithLang(INVITE_ERROR[lang], replyResponse.uri, replyResponse.cid, rootUri,
+        rootCid, lang, this.agent,
+      )
+    }
+  }
+
+  async rejectPartyInvite(req: TtrpgRequest) {
+    const subject = req.author
+    const cid = req.cid
+    const uri = req.uri
+    const lang = req.lang
+    const rootCid = req.rootCid
+    const rootUri = req.rootUri
+    const parentCid = req.parentCid
+    const parentUri = req.parentUri
+
+    if (parentUri === undefined) {
+      return
+    }
+
+    let partyInvite: QuestingPartyInvite | null
+    try {
+      partyInvite = await this.getPartyInvite(parentUri)
+    } catch (e) {
+      if (e instanceof DuelNotFound) {
+        logger.info('Duel not found')
+        return
+      } else {
+        logger.error(`Error encountered getting duel: ${e.message}`)
+        return
+      }
+    }
+    if (partyInvite === null) {
+      logger.info('Duel is null')
+      return
+    }
+
+    try {
+      await cancelPartyInviteFromDb(partyInvite.invite_id, this.db)
+    } catch (e) {
+      logger.error(`Error encountered cancelling duel from db: ${e.message}`)
+      throw e
+    }
+
+    await postReplyWithLang(DUEL_SUCCESSFULLY_CANCELLED_TEXT[lang], uri, cid, rootUri, rootCid,
+      lang, this.agent,
+    )
   }
 
   async giveGold(req: TtrpgRequest) {
     const subject = req.author
     const cid = req.cid
+    const lang = req.lang
     const uri = req.uri
     const rootCid = req.rootCid
     const rootUri = req.rootUri
@@ -459,19 +877,23 @@ export class CharacterManager {
     const profile1 = await getProfile(this.agent, subject)
     const player1Label = await this.getCharacterClassLabel(profile1)
     if (player1Label === undefined) {
-      await postReply(DONOR_NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(DONOR_NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
     const profile2 = await getProfile(this.agent, otherPlayerHandler)
     const player2Label = await this.getCharacterClassLabel(profile2)
     if (player2Label === undefined) {
-      await postReply(RECIPIENT_NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(RECIPIENT_NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
     if (subject == profile2.data.did) {
-      await postReply(SELF_DONOR_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(SELF_DONOR_TEXT[lang], uri, cid, rootUri, rootCid, lang, this.agent)
       return
     }
 
@@ -479,17 +901,23 @@ export class CharacterManager {
     let character2 = await this.getCharacter(profile2.data.did)
 
     if (character1 === null) {
-      await postReply(DONOR_NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(DONOR_NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
     if (character2 === null) {
-      await postReply(RECIPIENT_NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(RECIPIENT_NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
     let goldAmt = Number.parseFloat(splitText[3])
     if (!Number.isInteger(goldAmt)) {
-      await postReply(INVALID_DUEL_GOLD_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(INVALID_DUEL_GOLD_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
@@ -497,23 +925,27 @@ export class CharacterManager {
     const character1AvailableGold = character1.gold - char1AllocatedGold
 
     if (goldAmt < 1) {
-      await postReply(INVALID_DUEL_GOLD_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(INVALID_DUEL_GOLD_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     } else if (character1AvailableGold < goldAmt) {
-      await postReply(DONOR_NOT_ENOUGH_GOLD_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(DONOR_NOT_ENOUGH_GOLD_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
-    const responseText = `Gold has been successfully donated.`
-    const replyResponse = await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
+    const replyResponse = await postReplyWithLang(DONATION_SUCCESSFUL[lang], uri, cid, rootUri,
+      rootCid, lang, this.agent,
+    )
 
     try {
       await transferGoldInDB(this.db, character1.author, character2.author, goldAmt)
     } catch (e) {
       logger.error(`Error transferring gold: ${e.message}`)
-      await postReply(
-        'Something has gone wrong donating gold, please reach out to @ripperoni.com',
-        replyResponse.uri, replyResponse.cid, rootUri, rootCid, this.agent,
+      await postReplyWithLang(DONATION_ERROR[lang], replyResponse.uri, replyResponse.cid, rootUri,
+        rootCid, lang, this.agent,
       )
     }
   }
@@ -538,13 +970,16 @@ export class CharacterManager {
   async reroll(req: TtrpgRequest) {
     const subject = req.author
     const cid = req.cid
+    const lang = req.lang
     const uri = req.uri
     const rootCid = req.rootCid
     const rootUri = req.rootUri
 
     const character = await this.getCharacter(req.author)
     if (character === null) {
-      await postReply(NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
@@ -552,12 +987,16 @@ export class CharacterManager {
     try {
       rerollAttempts = await this.getRollAttempts(subject)
     } catch (e) {
-      await postReply(GENERIC_ERROR_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(GENERIC_ERROR_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
     if (rerollAttempts.length > 1) {
-      await postReply(MAX_REROLLS_REACHED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(MAX_REROLLS_REACHED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
@@ -585,10 +1024,12 @@ export class CharacterManager {
     await emitOverideLabel(this.agent, subject, newLabel, character.class)
 
     if (rerollAttempts.length === 0) {
-      await postReply(FIRST_REROLL_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(FIRST_REROLL_TEXT[lang], uri, cid, rootUri, rootCid, lang, this.agent)
       return
     } else if (rerollAttempts.length === 1) {
-      await postReply(SECOND_REROLL_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(SECOND_REROLL_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
   }

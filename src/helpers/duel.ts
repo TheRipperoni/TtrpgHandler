@@ -28,7 +28,7 @@ export const JOUST_OPTION_CLASS_TRANSLATIONS = {
     'kineticist': 'elemental blast',
     'summoner': 'clawed companion',
     'oracle': 'future sight',
-    'investigator': 'deceptic blow',
+    'investigator': 'deceptive blow',
     'magus': 'arcane fists',
     'swashbuckler': 'exemplary attack',
     'thaumaturge': 'summon familiar',
@@ -78,6 +78,78 @@ export const JOUST_OPTION_CLASS_TRANSLATIONS = {
     'magus': 'shooting star',
     'swashbuckler': 'demoralize',
     'thaumaturge': 'exploit vulnerability',
+  },
+}
+
+export const JOUST_OPTION_CLASS_TRANSLATIONS_BR = {
+  thrust: {
+    'alchemist': 'bomba alquímica',
+    'barbarian': 'oponente de porrete',
+    'bard': 'flecha de arco curto',
+    'champion': 'golpe divino',
+    'cleric': 'mãos danosas',
+    'druid': 'transforme e ataque',
+    'fighter': 'ataque poderoso',
+    'monk': 'ataque magistral',
+    'witch': 'relâmpago',
+    'wizard': 'tempestade de raios',
+    'rogue': 'ataque furtivo',
+    'ranger': 'enxurrada de lâminas',
+    'sorcerer': 'relâmpago sombrio',
+    'psychic': 'golpe fraco',
+    'kineticist': 'explosão elemental',
+    'summoner': 'companheiro de garras',
+    'oracle': 'visão futura',
+    'investigator': 'golpe enganoso',
+    'magus': 'punhos arcanos',
+    'swashbuckler': 'ataque exemplar',
+    'thaumaturge': 'invocar familiar',
+  },
+  fireball: {
+    'alchemist': 'dardo venenoso',
+    'barbarian': 'golpe furioso',
+    'bard': 'canção da desgraça',
+    'champion': 'toque de corrupção',
+    'cleric': 'canal smite',
+    'druid': 'invocar um companheiro animal',
+    'fighter': 'tiro à queima-roupa',
+    'monk': 'ataque de ki',
+    'witch': 'hex',
+    'wizard': 'bola de fogo',
+    'rogue': 'tiro furtivo',
+    'ranger': 'besta',
+    'sorcerer': 'raio arcano',
+    'psychic': 'ruptura psi',
+    'kineticist': 'explosão crítica',
+    'summoner': 'companheiro de voo',
+    'oracle': 'raio',
+    'investigator': 'armadilha bem planejada',
+    'magus': 'devestating spellstrike',
+    'swashbuckler': 'defesa decisiva',
+    'thaumaturge': 'falar sobre conhecimentos esotéricos',
+  },
+  curse: {
+    'alchemist': 'ataque mutagênico',
+    'barbarian': 'quebra de teto',
+    'bard': 'zombaria cruel',
+    'champion': 'vingança cruel',
+    'cleric': 'vida útil do dreno',
+    'druid': 'aproveite a natureza',
+    'fighter': 'golpe de captura',
+    'monk': 'punho elemental',
+    'witch': 'maldição',
+    'wizard': 'lança de gelo',
+    'rogue': 'lâmina envenenada',
+    'ranger': 'foto rápida',
+    'sorcerer': 'pluma de lava',
+    'psychic': 'fuga de cérebros',
+    'kineticist': 'explosão impulsiva',
+    'summoner': 'companheiro tóxico',
+    'oracle': 'bola de fogo',
+    'investigator': 'ritual ocultista',
+    'magus': 'estrela cadente',
+    'swashbuckler': 'desmoralizar',
+    'thaumaturge': 'explorar a vulnerabilidade',
   },
 }
 
@@ -264,10 +336,11 @@ export async function createDuelInDb(
     player2Did: string,
     goldAmt: number,
     cid: string,
-    uri: string
+    uri: string,
+    lang: string,
   },
 ) {
-  const { player1Did, player2Did, goldAmt, cid, uri } = opt
+  const { player1Did, player2Did, goldAmt, cid, uri, lang } = opt
   const newDuelEntry: Duel = {
     player1: player1Did,
     player2: player2Did,
@@ -284,6 +357,7 @@ export async function createDuelInDb(
     created_at: new Date().toISOString(),
     root_uri: null,
     root_cid: null,
+    lang: lang,
   }
 
   await db.insertInto('duel')
@@ -336,6 +410,12 @@ export async function cancelAllProposedDuels(db: TtrpgDatabase, subject: string)
   return duels
 }
 
+export async function getDuel(db: TtrpgDatabase, uri: string): Promise<Duel[]> {
+  return await db.selectFrom('duel')
+    .where('uri', 'is', uri)
+    .selectAll().execute()
+}
+
 export async function createAdvancedDuelInDb(
   db: TtrpgDatabase,
   opt: {
@@ -346,9 +426,10 @@ export async function createAdvancedDuelInDb(
     uri: string,
     rootCid: string,
     rootUri: string,
+    lang: string,
   },
 ) {
-  const { player1Did, player2Did, goldAmt, cid, uri, rootUri, rootCid } = opt
+  const { player1Did, player2Did, goldAmt, cid, uri, rootUri, rootCid, lang } = opt
   const newDuelEntry: Duel = {
     player1: player1Did,
     player2: player2Did,
@@ -365,6 +446,7 @@ export async function createAdvancedDuelInDb(
     created_at: new Date().toISOString(),
     root_uri: rootUri,
     root_cid: rootCid,
+    lang: lang,
   }
 
   await db.insertInto('duel')

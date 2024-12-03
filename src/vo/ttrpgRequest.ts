@@ -3,6 +3,7 @@ export interface TtrpgRequest {
   text: string
   uri: string
   cid: string
+  lang: string
   rootUri: string
   rootCid: string
   parentCid: string | undefined
@@ -26,4 +27,6 @@ export enum RequestType {
   INVALID,
   GIVE_GOLD,
   LIST_COMMANDS,
+  CREATE_PARTY,
+  INVITE_TO_PARTY,
 }

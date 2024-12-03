@@ -7,12 +7,14 @@ import { BskyAgent } from '@atproto/api'
 import { logger } from './util/logger'
 import { TtrpgDatabase } from './db'
 import { Post } from './db/schema'
+import { LANGUAGES } from './constants'
+import { getDuel } from './helpers/duel'
 
 export class EventHandler {
   characterManager: CharacterManager
   duelManager: DuelManager
 
-  constructor(db: TtrpgDatabase, agent: BskyAgent) {
+  constructor(public db: TtrpgDatabase, agent: BskyAgent) {
     this.characterManager = new CharacterManager(db, agent)
     this.duelManager = new DuelManager(db, agent, this.characterManager)
   }
@@ -34,13 +36,27 @@ export class EventHandler {
         await this.characterManager.reroll(req)
         break
       case RequestType.ACCEPT_DUEL:
-        await this.duelManager.acceptDuel(req)
+        if (req.parentUri !== undefined) {
+          const duels = await getDuel(this.db, req.parentUri)
+          if (duels.length > 0) {
+            await this.duelManager.acceptDuel(req)
+          } else {
+            await this.characterManager.acceptPartyInvite(req)
+          }
+        }
         break
       case RequestType.CREATE_DUEL:
         await this.duelManager.createDuel(req)
         break
       case RequestType.REJECT_DUEL:
-        await this.duelManager.cancelDuel(req)
+        if (req.parentUri !== undefined) {
+          const duels = await getDuel(this.db, req.parentUri)
+          if (duels.length > 0) {
+            await this.duelManager.cancelDuel(req)
+          } else {
+            await this.characterManager.rejectPartyInvite(req)
+          }
+        }
         break
       case RequestType.FETCH_OPEN_DUELS:
         await this.duelManager.getOpenDuels(req)
@@ -72,16 +88,27 @@ export class EventHandler {
       case RequestType.GIVE_GOLD:
         await this.characterManager.giveGold(req)
         break
+      case RequestType.CREATE_PARTY:
+        await this.characterManager.createParty(req)
+        break
+      case RequestType.INVITE_TO_PARTY:
+        await this.characterManager.createPartyInvite(req)
+        break
       default:
         break
     }
   }
 
   async transformPostToTtrpg(post: Post) {
+    let lang = post.lang ?? 'en'
+    if (!LANGUAGES.includes(lang)) {
+      lang = 'en'
+    }
     let transformedRequest: TtrpgRequest = {
       author: post.author,
       text: post.text,
       uri: post.uri,
+      lang: lang,
       cid: post.cid,
       rootUri: post.rootUri,
       rootCid: post.rootCid,
@@ -132,17 +159,21 @@ export class EventHandler {
           return RequestType.LIST_COMMANDS
         case 'givegold':
           return RequestType.GIVE_GOLD
+        case 'createparty':
+          return RequestType.CREATE_PARTY
+        case 'sendinvite':
+          return RequestType.INVITE_TO_PARTY
         default:
           return RequestType.INVALID
       }
     }
 
-    if (firstWord.startsWith('accept') || firstWord === 'a') {
+    if (firstWord.startsWith('accept') || firstWord.startsWith('aceit') || firstWord === 'a') {
       return RequestType.ACCEPT_DUEL
     }
 
     if (firstWord.startsWith('cancel') || firstWord === 'c'
-      || firstWord.startsWith('reject') || firstWord === 'r') {
+      || firstWord.startsWith('reject') || firstWord.startsWith('rejeit') || firstWord === 'r') {
       return RequestType.REJECT_DUEL
     }
 

@@ -2,7 +2,7 @@ import {
   getConvoForMembers,
   getMessages, getProfile,
   postReply,
-  postReplyWithEmbed, postReplyWithFacets,
+  postReplyWithEmbed, postReplyWithFacets, postReplyWithLang,
   sendMessage,
 } from '../agent'
 import { TtrpgRequest } from '../vo/ttrpgRequest'
@@ -20,29 +20,30 @@ import {
   fetchOpenDuelsInDb,
   getCharacterAllocatedGold,
   getDuelFromDB,
-  JOUST_OPTION, JOUST_OPTION_CLASS_TRANSLATIONS,
+  JOUST_OPTION, JOUST_OPTION_CLASS_TRANSLATIONS, JOUST_OPTION_CLASS_TRANSLATIONS_BR,
   resolveDuel, resolveJoust,
   updateAdvancedDuelToAccepted,
   updateJoustWithConvoIDs,
   updatePlayerOneJoustChoiceInDB, updatePlayerTwoJoustChoiceInDB,
 } from '../helpers/duel'
 import {
+  ACCEPT_DUELIST_NO_CHARACTER, ACCEPT_RECIPIENT_NO_CHARACTER,
   ALL_PROPOSED_DUELS_CANCELLED_TEXT,
   CHALLENGED_GM_TEXT,
   CHALLENGED_NOT_ENOUGH_GOLD_PENDING_TEXT,
   CHALLENGED_NOT_ENOUGH_GOLD_TEXT,
   CHALLENGED_NOT_SUBSCRIBED_TEXT,
-  DUEL_ALREADY_RESOLVED_TEXT,
-  DUEL_SUCCESSFULLY_CANCELLED_TEXT,
+  DUEL_ALREADY_RESOLVED_TEXT, DUEL_ERROR, DUEL_INITIATED,
+  DUEL_SUCCESSFULLY_CANCELLED_TEXT, DUEL_WINNER,
   INITIATOR_NOT_ENOUGH_GOLD_PENDING_TEXT,
   INITIATOR_NOT_ENOUGH_GOLD_TEXT,
   INITIATOR_NOT_SUBSCRIBED_TEXT,
   INVALID_DUEL_GOLD_TEXT,
   JOUST_ALREADY_RESOLVED_TEXT,
-  JOUST_CHOICE_ACCEPTED,
-  JOUST_SUCCESSFULLY_CANCELLED_TEXT,
+  JOUST_CHOICE_ACCEPTED, JOUST_ERROR, JOUST_INITIATED, JOUST_NEXT_STEPS,
+  JOUST_SUCCESSFULLY_CANCELLED_TEXT, NO_OPEN_DUELS,
   NOT_SUBSCRIBED_TEXT,
-  SELF_CHALLENGED_TEXT,
+  SELF_CHALLENGED_TEXT, UNEXPECTED_ERROR,
 } from '../constants'
 
 import { TtrpgDatabase } from '../db'
@@ -88,6 +89,7 @@ export class DuelManager {
     const subject = req.author
     const cid = req.cid
     const uri = req.uri
+    const lang = req.lang
     const rootCid = req.rootCid
     const rootUri = req.rootUri
     const parentCid = req.parentCid
@@ -124,14 +126,14 @@ export class DuelManager {
 
     const character1 = await this.characterManager.getCharacter(duel.player1)
     if (character1 === null) {
-      await postReply('Duelist Initiator does not have a character', uri, cid, rootUri, rootCid,
+      await postReplyWithLang(ACCEPT_DUELIST_NO_CHARACTER[lang], uri, cid, rootUri, rootCid, lang,
         this.agent,
       )
       return
     }
     const character2 = await this.characterManager.getCharacter(duel.player2)
     if (character2 === null) {
-      await postReply('Duelist Acceptor does not have a character', uri, cid, rootUri, rootCid,
+      await postReplyWithLang(ACCEPT_RECIPIENT_NO_CHARACTER[lang], uri, cid, rootUri, rootCid, lang,
         this.agent,
       )
       return
@@ -175,14 +177,14 @@ export class DuelManager {
       loserExperience: loser.experience,
     })
 
-    const responseText = `The winner is ${winnerDisplay}`
-    await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
+    const responseText = `${DUEL_WINNER[lang]}${winnerDisplay}`
+    await postReplyWithLang(responseText, uri, cid, rootUri, rootCid, lang, this.agent)
 
-    this.characterManager.levelUp(character1, char1Display, uri, cid, rootUri, rootCid)
+    this.characterManager.levelUp(character1, char1Display, uri, cid, rootUri, rootCid, lang)
       .catch((e) => {
         logger.error(`Error for level up ${character1.author} with error: ${e.message}`)
       })
-    this.characterManager.levelUp(character2, char2Display, uri, cid, rootUri, rootCid)
+    this.characterManager.levelUp(character2, char2Display, uri, cid, rootUri, rootCid, lang)
       .catch((e) => {
         logger.error(`Error for level up ${character2.author} with error: ${e.message}`)
       })
@@ -193,69 +195,30 @@ export class DuelManager {
     const cid = req.cid
     const uri = req.uri
     const rootCid = req.rootCid
+    const lang = req.lang
     const rootUri = req.rootUri
     const parentCid = req.parentCid
     const parentUri = req.parentUri
 
     const character1 = await this.characterManager.getCharacter(duel.player1)
     if (character1 === null) {
-      await postReply('Duelist Initiator does not have a character', uri, cid, rootUri, rootCid,
+      await postReplyWithLang(ACCEPT_DUELIST_NO_CHARACTER[lang], uri, cid, rootUri, rootCid, lang,
         this.agent,
       )
       return
     }
     const character2 = await this.characterManager.getCharacter(duel.player2)
     if (character2 === null) {
-      await postReply('Duelist Acceptor does not have a character', uri, cid, rootUri, rootCid,
+      await postReplyWithLang(ACCEPT_RECIPIENT_NO_CHARACTER[lang], uri, cid, rootUri, rootCid, lang,
         this.agent,
       )
       return
     }
 
     await updateAdvancedDuelToAccepted(this.db, parentCid!, parentUri!)
-    const responseText = `Both players should receive a DM from this account, follow instructions there for the next step.`
-    await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
+    await postReplyWithLang(JOUST_NEXT_STEPS[lang], uri, cid, rootUri, rootCid, lang, this.agent)
 
     return await this.sendAdvancedDuelMessages(character1, character2, duel)
-  }
-
-  private buildJoustMessage(handle: string, character: Character) {
-    let thrust: string
-    let fireball: string
-    let curse: string
-    // if (character.secondary_class === null) {
-    thrust = JOUST_OPTION_CLASS_TRANSLATIONS.thrust[character.class]
-    fireball = JOUST_OPTION_CLASS_TRANSLATIONS.fireball[character.class]
-    curse = JOUST_OPTION_CLASS_TRANSLATIONS.curse[character.class]
-    // } else {
-    //   const rndArray: number[] = [Math.floor(Math.random() * 2), Math.floor(Math.random() * 2), Math.floor(Math.random() * 2)]
-    //   if (rndArray[0] === 0) {
-    //     thrust = JOUST_OPTION_CLASS_TRANSLATIONS.thrust[character.class]
-    //   } else {
-    //     thrust = JOUST_OPTION_CLASS_TRANSLATIONS.thrust[character.secondary_class]
-    //   }
-    //   if (rndArray[1] === 0) {
-    //     fireball = JOUST_OPTION_CLASS_TRANSLATIONS.fireball[character.class]
-    //   } else {
-    //     fireball = JOUST_OPTION_CLASS_TRANSLATIONS.fireball[character.secondary_class]
-    //   }
-    //   if (rndArray[2] === 0) {
-    //     curse = JOUST_OPTION_CLASS_TRANSLATIONS.curse[character.class]
-    //   } else {
-    //     curse = JOUST_OPTION_CLASS_TRANSLATIONS.curse[character.secondary_class]
-    //   }
-    // }
-
-    const requestText: string = `You have engaged in a joust with @${handle}.
-Please respond by sending both this player's handle and the number for the action selected.
-Actions available:
-1. ${thrust}
-2. ${fireball}
-3. ${curse}
-Example:
-@${handle} one
-@${handle} 1`
-    return requestText
   }
 
   async sendAdvancedDuelMessages(characterOne: Character, characterTwo: Character, duel: Duel) {
@@ -266,8 +229,8 @@ Example:
 
     const profile1 = await getProfile(this.agent, characterOne.author)
     const profile2 = await getProfile(this.agent, characterTwo.author)
-    const requestText1: string = this.buildJoustMessage(profile2.data.handle, characterOne)
-    const requestText2: string = this.buildJoustMessage(profile1.data.handle, characterTwo)
+    const requestText1: string = this.buildJoustMessage(profile2.data.handle, characterOne, duel.lang ?? 'en')
+    const requestText2: string = this.buildJoustMessage(profile1.data.handle, characterTwo, duel.lang ?? 'en')
     await sendMessage(this.agent, playerOneConvoId, requestText1)
     await sendMessage(this.agent, playerTwoConvoId, requestText2)
 
@@ -275,6 +238,7 @@ Example:
   }
 
   async resolveJoust(joust: Duel) {
+    const lang = joust.lang ?? 'en'
     if (joust.player1_convo_choice !== null && joust.player2_convo_choice !== null) {
       const profile1 = await getProfile(this.agent, joust.player1)
       const profile2 = await getProfile(this.agent, joust.player2)
@@ -310,7 +274,13 @@ Example:
       }
 
       if (joust.player1_convo_choice == joust.player2_convo_choice) {
-        winningMove = 'pure luck'
+        if (lang == 'pt') {
+          winningMove = 'pura sorte'
+        } else {
+          winningMove = 'pure luck'
+        }
+
+
 
         const rndInt = Math.floor(Math.random() * 2)
         if (rndInt === 1) {
@@ -330,13 +300,21 @@ Example:
 
         if (p1 == JOUST_OPTION.THRUST) {
           if (p2 == JOUST_OPTION.FIREBALL) {
-            winningMove = JOUST_OPTION_CLASS_TRANSLATIONS.fireball[character2.class]
+            if (lang == 'pt') {
+              winningMove = JOUST_OPTION_CLASS_TRANSLATIONS_BR.fireball[character2.class]
+            } else {
+              winningMove = JOUST_OPTION_CLASS_TRANSLATIONS.fireball[character2.class]
+            }
             winner = character2
             winnerDisplay = char2Display
             loser = character1
             loserDisplay = char1Display
           } else {
-            winningMove = JOUST_OPTION_CLASS_TRANSLATIONS.thrust[character1.class]
+            if (lang == 'pt') {
+              winningMove = JOUST_OPTION_CLASS_TRANSLATIONS_BR.thrust[character1.class]
+            } else {
+              winningMove = JOUST_OPTION_CLASS_TRANSLATIONS.thrust[character1.class]
+            }
             winner = character1
             winnerDisplay = char1Display
             loser = character2
@@ -344,13 +322,21 @@ Example:
           }
         } else if (p1 == JOUST_OPTION.FIREBALL) {
           if (p2 == JOUST_OPTION.THRUST) {
-            winningMove = JOUST_OPTION_CLASS_TRANSLATIONS.fireball[character1.class]
+            if (lang == 'pt') {
+              winningMove = JOUST_OPTION_CLASS_TRANSLATIONS_BR.fireball[character1.class]
+            } else {
+              winningMove = JOUST_OPTION_CLASS_TRANSLATIONS.fireball[character1.class]
+            }
             winner = character1
             winnerDisplay = char1Display
             loser = character2
             loserDisplay = char2Display
           } else {
-            winningMove = JOUST_OPTION_CLASS_TRANSLATIONS.curse[character2.class]
+            if (lang == 'pt') {
+              winningMove = JOUST_OPTION_CLASS_TRANSLATIONS_BR.curse[character2.class]
+            } else {
+              winningMove = JOUST_OPTION_CLASS_TRANSLATIONS.curse[character2.class]
+            }
             winner = character2
             winnerDisplay = char2Display
             loser = character1
@@ -358,13 +344,21 @@ Example:
           }
         } else {
           if (p2 == JOUST_OPTION.FIREBALL) {
-            winningMove = JOUST_OPTION_CLASS_TRANSLATIONS.curse[character1.class]
+            if (lang == 'pt') {
+              winningMove = JOUST_OPTION_CLASS_TRANSLATIONS_BR.curse[character1.class]
+            } else {
+              winningMove = JOUST_OPTION_CLASS_TRANSLATIONS.curse[character1.class]
+            }
             winner = character1
             winnerDisplay = char1Display
             loser = character2
             loserDisplay = char2Display
           } else {
-            winningMove = JOUST_OPTION_CLASS_TRANSLATIONS.thrust[character2.class]
+            if (lang == 'pt') {
+              winningMove = JOUST_OPTION_CLASS_TRANSLATIONS_BR.thrust[character2.class]
+            } else {
+              winningMove = JOUST_OPTION_CLASS_TRANSLATIONS.thrust[character2.class]
+            }
             winner = character2
             winnerDisplay = char2Display
             loser = character1
@@ -384,7 +378,12 @@ Example:
         loserExperience: loser.experience,
       })
 
-      const responseText = `${winnerDisplay} used ${winningMove} and won the joust!\nParticipants @${profile1.data.handle}, @${profile2.data.handle}`
+      let responseText: string
+      if (lang == 'pt') {
+        responseText = `${winnerDisplay} usou ${winningMove} e venceu a disputa!\nParticipantes @${profile1.data.handle}, @${profile2.data.handle}`
+      } else {
+        responseText = `${winnerDisplay} used ${winningMove} and won the joust!\nParticipants @${profile1.data.handle}, @${profile2.data.handle}`
+      }
       let rt = new RichText({ text: responseText }, {})
       let facets: Facet[] = detectFacets(rt.unicodeText)!
 
@@ -396,18 +395,19 @@ Example:
         facets[0].features[0].did = character1.author
         facets[1].features[0].did = character2.author
       }
-      await postReplyWithFacets(responseText, joust.uri!, joust.cid, joust.root_uri!, joust.root_cid!,
-        this.agent, facets
+      await postReplyWithFacets(responseText, joust.uri!, joust.cid, joust.root_uri!,
+        joust.root_cid!,
+        this.agent, facets, lang
       )
 
       this.characterManager.levelUp(character1, char1Display, joust.uri!, joust.cid,
-          joust.root_uri!, joust.root_cid!,
+          joust.root_uri!, joust.root_cid!, joust.lang ?? 'en'
         )
         .catch((e) => {
           logger.error(`Error for level up ${character1.author} with error: ${e.message}`)
         })
       this.characterManager.levelUp(character2, char2Display, joust.uri!, joust.cid,
-          joust.root_uri!, joust.root_cid!,
+          joust.root_uri!, joust.root_cid!, joust.lang ?? 'en'
         )
         .catch((e) => {
           logger.error(`Error for level up ${character2.author} with error: ${e.message}`)
@@ -415,13 +415,13 @@ Example:
     }
   }
 
-  standardizeJoustChoice(text: string): string|null {
-    let result: string|null = null
+  standardizeJoustChoice(text: string): string | null {
+    let result: string | null = null
     const splitText = text.toLowerCase().split(/\s+/)
     const choice = splitText[1]
-    let thrustChoices = ['thrust', '1', 'one']
-    let fireballChoices = ['fireball', '2', 'two']
-    let curseChoices = ['curse', '3', 'three']
+    let thrustChoices = ['thrust', '1', 'one', 'um']
+    let fireballChoices = ['fireball', '2', 'two', 'dois']
+    let curseChoices = ['curse', '3', 'three', 'três']
 
     if (splitText.length >= 2) {
       if (thrustChoices.includes(choice)) {
@@ -464,7 +464,7 @@ Example:
 
       if (choice !== null) {
         await updatePlayerOneJoustChoiceInDB(this.db, joust.cid, joust.uri!, choice)
-        await sendMessage(this.agent, joust.player1_convo_id, JOUST_CHOICE_ACCEPTED)
+        await sendMessage(this.agent, joust.player1_convo_id, JOUST_CHOICE_ACCEPTED[joust.lang ?? 'en'])
       }
     }
     if (joust.player2_convo_choice === null) {
@@ -490,7 +490,7 @@ Example:
 
       if (choice !== null) {
         await updatePlayerTwoJoustChoiceInDB(this.db, joust.cid, joust.uri!, choice)
-        await sendMessage(this.agent, joust.player2_convo_id, JOUST_CHOICE_ACCEPTED)
+        await sendMessage(this.agent, joust.player2_convo_id, JOUST_CHOICE_ACCEPTED[joust.lang ?? 'en'])
       }
     }
   }
@@ -499,6 +499,7 @@ Example:
     const subject = req.author
     const cid = req.cid
     const uri = req.uri
+    const lang = req.lang
     const rootCid = req.rootCid
     const rootUri = req.rootUri
     const parentCid = req.parentCid
@@ -522,7 +523,7 @@ Example:
 
     if ((duel.player2 === subject || duel.player1 === subject) && (duel.duel_type === DUEL_TYPE.BASIC && duel.status !== 0)) {
       logger.info('Duel already resolved')
-      await postReply(DUEL_ALREADY_RESOLVED_TEXT, uri, cid, rootUri, rootCid,
+      await postReplyWithLang(DUEL_ALREADY_RESOLVED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
         this.agent,
       )
       return
@@ -530,7 +531,7 @@ Example:
 
     if ((duel.player2 === subject || duel.player1 === subject) && (duel.duel_type === DUEL_TYPE.JOUST && [JOUST_CANCELED,
       JOUST_RESOLVED].includes(duel.status))) {
-      await postReply(JOUST_ALREADY_RESOLVED_TEXT, uri, cid, rootUri, rootCid,
+      await postReplyWithLang(JOUST_ALREADY_RESOLVED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
         this.agent,
       )
       return
@@ -549,15 +550,20 @@ Example:
     }
 
     if (duel.duel_type == DUEL_TYPE.JOUST) {
-      await postReply(JOUST_SUCCESSFULLY_CANCELLED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(JOUST_SUCCESSFULLY_CANCELLED_TEXT[lang], uri, cid, rootUri, rootCid,
+        lang, this.agent,
+      )
     } else {
-      await postReply(DUEL_SUCCESSFULLY_CANCELLED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(DUEL_SUCCESSFULLY_CANCELLED_TEXT[lang], uri, cid, rootUri, rootCid,
+        lang, this.agent,
+      )
     }
   }
 
   async cancelAllDuels(req: TtrpgRequest) {
     const subject = req.author
     const cid = req.cid
+    const lang = req.lang
     const uri = req.uri
     const rootCid = req.rootCid
     const rootUri = req.rootUri
@@ -572,17 +578,22 @@ Example:
     }
 
     if (character === null) {
-      await postReply(NOT_SUBSCRIBED_TEXT, req.uri, req.cid, req.rootUri, req.rootCid, this.agent)
+      await postReplyWithLang(NOT_SUBSCRIBED_TEXT[lang], req.uri, req.cid, req.rootUri, req.rootCid,
+        lang, this.agent,
+      )
       return
     }
 
     await cancelAllProposedDuels(this.db, subject)
-    await postReply(ALL_PROPOSED_DUELS_CANCELLED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+    await postReplyWithLang(ALL_PROPOSED_DUELS_CANCELLED_TEXT[lang], uri, cid, rootUri, rootCid,
+      lang, this.agent,
+    )
   }
 
   async createDuel(req: TtrpgRequest) {
     const subject = req.author
     const cid = req.cid
+    const lang = req.lang
     const uri = req.uri
     const rootCid = req.rootCid
     const rootUri = req.rootUri
@@ -593,26 +604,34 @@ Example:
     const challengedPlayerHandle = splitText[2].substring(1)
 
     if (challengedPlayerHandle === 'bskyttrpg.bsky.social') {
-      await postReply(CHALLENGED_GM_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(CHALLENGED_GM_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
     const profile1 = await getProfile(this.agent, subject)
     const player1Label = await this.characterManager.getCharacterClassLabel(profile1)
     if (player1Label === undefined) {
-      await postReply(INITIATOR_NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(INITIATOR_NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
     const profile2 = await getProfile(this.agent, challengedPlayerHandle)
     const player2Label = await this.characterManager.getCharacterClassLabel(profile2)
     if (player2Label === undefined) {
-      await postReply(CHALLENGED_NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(CHALLENGED_NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid,
+        lang, this.agent,
+      )
       return
     }
 
     if (subject == profile2.data.did) {
-      await postReply(SELF_CHALLENGED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(SELF_CHALLENGED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
@@ -620,17 +639,23 @@ Example:
     let character2 = await this.characterManager.getCharacter(profile2.data.did)
 
     if (character1 === null) {
-      await postReply(INITIATOR_NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(INITIATOR_NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
     if (character2 === null) {
-      await postReply(CHALLENGED_NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(CHALLENGED_NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid,
+        lang, this.agent,
+      )
       return
     }
 
     let duelGoldAmt = Number.parseFloat(splitText[3])
     if (!Number.isInteger(duelGoldAmt)) {
-      await postReply(INVALID_DUEL_GOLD_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(INVALID_DUEL_GOLD_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
@@ -638,48 +663,56 @@ Example:
     const character2AvailableGold = await this.getAvailableGold(character2)
 
     if (duelGoldAmt < 1) {
-      await postReply(INVALID_DUEL_GOLD_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(INVALID_DUEL_GOLD_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
     if (character1.gold < duelGoldAmt) {
-      await postReply(INITIATOR_NOT_ENOUGH_GOLD_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(INITIATOR_NOT_ENOUGH_GOLD_TEXT[lang], uri, cid, rootUri, rootCid,
+        lang, this.agent,
+      )
       return
     }
     if (character2.gold < duelGoldAmt) {
-      await postReply(CHALLENGED_NOT_ENOUGH_GOLD_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(CHALLENGED_NOT_ENOUGH_GOLD_TEXT[lang], uri, cid, rootUri, rootCid,
+        lang, this.agent,
+      )
       return
     }
     if (character1AvailableGold < duelGoldAmt) {
-      await postReply(INITIATOR_NOT_ENOUGH_GOLD_PENDING_TEXT, uri, cid, rootUri, rootCid,
+      await postReplyWithLang(INITIATOR_NOT_ENOUGH_GOLD_PENDING_TEXT[lang], uri, cid, rootUri,
+        rootCid, lang,
         this.agent,
       )
       return
     }
     if (character2AvailableGold < duelGoldAmt) {
-      await postReply(CHALLENGED_NOT_ENOUGH_GOLD_PENDING_TEXT, uri, cid, rootUri, rootCid,
+      await postReplyWithLang(CHALLENGED_NOT_ENOUGH_GOLD_PENDING_TEXT[lang], uri, cid, rootUri,
+        rootCid, lang,
         this.agent,
       )
       return
     }
 
-    const responseText = `Duel has been initiated. Challenged player please reply either "Accept" or "Reject" after approximately 10 seconds. Duel Initiator may also reply "Reject" to cancel.`
-    const replyResponse = await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
+    const replyResponse = await postReplyWithLang(DUEL_INITIATED[lang], uri, cid, rootUri, rootCid, lang,
+      this.agent,
+    )
 
     try {
       await this.insertNewDuel(subject, profile2.data.did, duelGoldAmt, replyResponse.cid,
-        replyResponse.uri,
+        replyResponse.uri, lang,
       )
     } catch (e) {
       logger.error(`Error inserting new duel: ${e.message}`)
-      await postReply(
-        'Something has gone wrong creating the duel, please reach out to @ripperoni.com',
-        replyResponse.uri, replyResponse.cid, rootUri, rootCid, this.agent,
+      await postReplyWithLang(DUEL_ERROR[lang], replyResponse.uri, replyResponse.cid, rootUri,
+        rootCid, lang, this.agent
       )
     }
   }
 
   async insertNewDuel(player1Did: string, player2Did: string, goldAmt: number, cid: string,
-    uri: string,
+    uri: string, lang: string
   ) {
     await createDuelInDb(this.db, {
       player1Did: player1Did,
@@ -687,6 +720,7 @@ Example:
       goldAmt: goldAmt,
       cid: cid,
       uri: uri,
+      lang: lang,
     })
   }
 
@@ -694,6 +728,7 @@ Example:
     const subject = req.author
     const cid = req.cid
     const uri = req.uri
+    const lang = req.lang
     const rootCid = req.rootCid
     const rootUri = req.rootUri
 
@@ -702,20 +737,23 @@ Example:
       character = await this.characterManager.getCharacter(req.author)
     } catch (e) {
       logger.error(`Error encountered getting character: ${e.message}`)
-      await postReply('Unexpected error encountered', req.uri, req.cid, req.rootUri, req.rootCid,
+      await postReplyWithLang(UNEXPECTED_ERROR[lang], req.uri, req.cid, req.rootUri, req.rootCid,
+        lang,
         this.agent,
       )
       return
     }
 
     if (character === null) {
-      await postReply(NOT_SUBSCRIBED_TEXT, req.uri, req.cid, req.rootUri, req.rootCid, this.agent)
+      await postReplyWithLang(NOT_SUBSCRIBED_TEXT[lang], req.uri, req.cid, req.rootUri, req.rootCid,
+        lang, this.agent,
+      )
       return
     }
 
     const duels = await fetchOpenDuelsInDb(this.db, subject)
     if (duels.length == 0) {
-      await postReply('You have no open duels at the moment.', uri, cid, rootUri, rootCid,
+      await postReplyWithLang(NO_OPEN_DUELS[lang], uri, cid, rootUri, rootCid, lang,
         this.agent,
       )
       return
@@ -726,6 +764,7 @@ Example:
     for (const duel of duels) {
       if (duel.uri !== null) {
         const responseText = await this.buildFetchDuelResp(duel)
+        //TODO
         let response = await postReplyWithEmbed(responseText, responseUri, responseCid, rootUri,
           rootCid, this.agent, { uri: duel.uri, cid: duel.cid },
         )
@@ -740,6 +779,7 @@ Example:
    * @param duel
    */
   async buildFetchDuelResp(duel: Duel) {
+    //TODO
     let responseText: string = `You have ${duel.gold} gold allocated in an open duel with `
     const profile = await this.agent.getProfile({ actor: duel.player2 })
     if (profile.data.displayName === undefined) {
@@ -763,6 +803,7 @@ Example:
     const subject = req.author
     const cid = req.cid
     const uri = req.uri
+    const lang = req.lang
     const rootCid = req.rootCid
     const rootUri = req.rootUri
     const text = req.text
@@ -771,29 +812,39 @@ Example:
     const challengedPlayerHandle = splitText[2].substring(1)
 
     if (challengedPlayerHandle === 'bskyttrpg.bsky.social') {
-      await postReply(CHALLENGED_GM_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(CHALLENGED_GM_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     } else if (subject === challengedPlayerHandle) {
-      await postReply(SELF_CHALLENGED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(SELF_CHALLENGED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
     const characterOne = await this.characterManager.getCharacter(subject)
     if (characterOne === null) {
-      await postReply(NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
     const profile2 = await getProfile(this.agent, challengedPlayerHandle)
     const characterTwo = await this.characterManager.getCharacter(profile2.data.did)
     if (characterTwo === null) {
-      await postReply(CHALLENGED_NOT_SUBSCRIBED_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(CHALLENGED_NOT_SUBSCRIBED_TEXT[lang], uri, cid, rootUri, rootCid,
+        lang, this.agent,
+      )
       return
     }
 
     let duelGoldAmt = Number.parseFloat(splitText[3])
     if (!Number.isInteger(duelGoldAmt)) {
-      await postReply(INVALID_DUEL_GOLD_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(INVALID_DUEL_GOLD_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
 
@@ -801,32 +852,41 @@ Example:
     const character2AvailableGold = await this.getAvailableGold(characterTwo)
 
     if (duelGoldAmt < 1) {
-      await postReply(INVALID_DUEL_GOLD_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(INVALID_DUEL_GOLD_TEXT[lang], uri, cid, rootUri, rootCid, lang,
+        this.agent,
+      )
       return
     }
     if (characterOne.gold < duelGoldAmt) {
-      await postReply(INITIATOR_NOT_ENOUGH_GOLD_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(INITIATOR_NOT_ENOUGH_GOLD_TEXT[lang], uri, cid, rootUri, rootCid,
+        lang, this.agent,
+      )
       return
     }
     if (characterTwo.gold < duelGoldAmt) {
-      await postReply(CHALLENGED_NOT_ENOUGH_GOLD_TEXT, uri, cid, rootUri, rootCid, this.agent)
+      await postReplyWithLang(CHALLENGED_NOT_ENOUGH_GOLD_TEXT[lang], uri, cid, rootUri, rootCid,
+        lang, this.agent,
+      )
       return
     }
     if (character1AvailableGold < duelGoldAmt) {
-      await postReply(INITIATOR_NOT_ENOUGH_GOLD_PENDING_TEXT, uri, cid, rootUri, rootCid,
+      await postReplyWithLang(INITIATOR_NOT_ENOUGH_GOLD_PENDING_TEXT[lang], uri, cid, rootUri,
+        rootCid, lang,
         this.agent,
       )
       return
     }
     if (character2AvailableGold < duelGoldAmt) {
-      await postReply(CHALLENGED_NOT_ENOUGH_GOLD_PENDING_TEXT, uri, cid, rootUri, rootCid,
+      await postReplyWithLang(CHALLENGED_NOT_ENOUGH_GOLD_PENDING_TEXT[lang], uri, cid, rootUri,
+        rootCid, lang,
         this.agent,
       )
       return
     }
 
-    const responseText = `Joust has been initiated. Challenged player please reply either "Accept" or "Reject" after approximately 10 seconds. Joust Initiator may also reply "Reject" to cancel. DMs must be open to this bot in order to joust.`
-    const replyResponse = await postReply(responseText, uri, cid, rootUri, rootCid, this.agent)
+    const replyResponse = await postReplyWithLang(JOUST_INITIATED[lang], uri, cid, rootUri, rootCid,
+      lang, this.agent,
+    )
 
     try {
       await createAdvancedDuelInDb(this.db, {
@@ -837,14 +897,75 @@ Example:
         uri: replyResponse.uri,
         rootUri: rootUri,
         rootCid: rootCid,
+        lang: lang
       })
     } catch (e) {
       logger.error(`Error inserting new joust: ${e.message}`)
-      await postReply(
-        'Something has gone wrong creating the joust, please reach out to @ripperoni.com',
-        replyResponse.uri, replyResponse.cid, rootUri, rootCid, this.agent,
+      await postReplyWithLang(
+        JOUST_ERROR[lang],
+        replyResponse.uri, replyResponse.cid, rootUri, rootCid, lang, this.agent,
       )
     }
+  }
+
+  private buildJoustMessage(handle: string, character: Character, lang: string) {
+    let thrust: string
+    let fireball: string
+    let curse: string
+    // if (character.secondary_class === null) {
+
+    if (lang == 'pt' || lang == 'pt-br' || lang == 'br') {
+      thrust = JOUST_OPTION_CLASS_TRANSLATIONS_BR.thrust[character.class]
+      fireball = JOUST_OPTION_CLASS_TRANSLATIONS_BR.fireball[character.class]
+      curse = JOUST_OPTION_CLASS_TRANSLATIONS_BR.curse[character.class]
+
+          const requestText: string = `Você se envolveu em uma disputa com @${handle}.
+Responda enviando o nome do jogador e o número da ação selecionada.
+Ações disponíveis:
+1. ${thrust}
+2. ${fireball}
+3. ${curse}
+Exemplo:
+@${handle} um
+@${handle} 1`
+
+      return requestText
+    } else {
+      thrust = JOUST_OPTION_CLASS_TRANSLATIONS.thrust[character.class]
+      fireball = JOUST_OPTION_CLASS_TRANSLATIONS.fireball[character.class]
+      curse = JOUST_OPTION_CLASS_TRANSLATIONS.curse[character.class]
+
+      const requestText: string = `You have engaged in a joust with @${handle}.
+Please respond by sending both this player's handle and the number for the action selected.
+Actions available:
+1. ${thrust}
+2. ${fireball}
+3. ${curse}
+Example:
+@${handle} one
+@${handle} 1`
+
+      return requestText
+    }
+
+    // } else {
+    //   const rndArray: number[] = [Math.floor(Math.random() * 2), Math.floor(Math.random() * 2), Math.floor(Math.random() * 2)]
+    //   if (rndArray[0] === 0) {
+    //     thrust = JOUST_OPTION_CLASS_TRANSLATIONS.thrust[character.class]
+    //   } else {
+    //     thrust = JOUST_OPTION_CLASS_TRANSLATIONS.thrust[character.secondary_class]
+    //   }
+    //   if (rndArray[1] === 0) {
+    //     fireball = JOUST_OPTION_CLASS_TRANSLATIONS.fireball[character.class]
+    //   } else {
+    //     fireball = JOUST_OPTION_CLASS_TRANSLATIONS.fireball[character.secondary_class]
+    //   }
+    //   if (rndArray[2] === 0) {
+    //     curse = JOUST_OPTION_CLASS_TRANSLATIONS.curse[character.class]
+    //   } else {
+    //     curse = JOUST_OPTION_CLASS_TRANSLATIONS.curse[character.secondary_class]
+    //   }
+    // }
   }
 }
 

@@ -198,3 +198,45 @@ migrations['007'] = {
       .execute()
   },
 }
+migrations['008'] = {
+  async up(db: Kysely<TtrpgSchema>) {
+    await db.schema
+      .alterTable('duel')
+      .addColumn('lang', 'varchar')
+      .execute()
+  },
+  async down(db: Kysely<TtrpgSchema>) {
+    await db.schema
+      .alterTable('duel')
+      .dropColumn('lang')
+      .execute()
+  },
+}
+
+migrations['009'] = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('questing_party')
+      .addColumn('party_id', 'varchar', (col) => col.primaryKey())
+      .addColumn('party_leader', 'varchar', (col) => col.notNull())
+      .addColumn('party_size', 'integer', (col) => col.notNull())
+      .execute()
+    await db.schema
+      .createTable('questing_party_invite')
+      .addColumn('invite_id', 'varchar', (col) => col.primaryKey())
+      .addColumn('party_id', 'varchar', (col) => col.notNull())
+      .addColumn('character', 'varchar', (col) => col.notNull())
+      .addColumn('status', 'integer', (col) => col.notNull())
+      .execute()
+    await db.schema
+      .createTable('questing_party_member')
+      .addColumn('party_id', 'varchar', (col) => col.notNull())
+      .addColumn('character', 'varchar', (col) => col.notNull())
+      .execute()
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('questing_party').execute()
+    await db.schema.dropTable('questing_party_member').execute()
+    await db.schema.dropTable('questing_party_invite').execute()
+  },
+}

@@ -54,15 +54,41 @@ export const postReply = async (text: string,
   })
 }
 
+export const postReplyWithLang = async (text: string,
+  uri: string,
+  cid: string,
+  rootUri: string,
+  rootCid: string,
+  lang: string,
+  agent: BskyAgent,
+): Promise<{ uri: string; cid: string }> => {
+  return await agent.post({
+    langs: [lang],
+    text: text,
+    reply: {
+      root: {
+        uri: rootUri,
+        cid: rootCid,
+      },
+      parent: {
+        uri: uri,
+        cid: cid,
+      },
+    },
+  })
+}
+
 export const postReplyWithFacets = async (text: string,
   uri: string,
   cid: string,
   rootUri: string,
   rootCid: string,
   agent: BskyAgent,
-  facets: Facet[]
+  facets: Facet[],
+  lang: string
 ): Promise<{ uri: string; cid: string }> => {
   return await agent.post({
+    langs: [lang],
     text: text,
     reply: {
       root: {
