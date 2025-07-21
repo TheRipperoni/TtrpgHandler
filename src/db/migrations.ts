@@ -198,6 +198,7 @@ migrations['007'] = {
       .execute()
   },
 }
+
 migrations['008'] = {
   async up(db: Kysely<TtrpgSchema>) {
     await db.schema
@@ -238,5 +239,20 @@ migrations['009'] = {
     await db.schema.dropTable('questing_party').execute()
     await db.schema.dropTable('questing_party_member').execute()
     await db.schema.dropTable('questing_party_invite').execute()
+  },
+}
+
+migrations['010'] = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('adventure')
+      .addColumn('adventure_id', 'varchar', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar', (col) => col.notNull())
+      .addColumn('cid', 'varchar', (col) => col.notNull())
+      .addColumn('status', 'varchar', (col) => col.notNull())
+      .execute()
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('adventure').execute()
   },
 }

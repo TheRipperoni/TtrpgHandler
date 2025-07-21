@@ -8,6 +8,7 @@ export type TtrpgSchema = {
   questing_party: QuestingParty
   questing_party_member: QuestingPartyMember
   questing_party_invite: QuestingPartyInvite
+  adventure: Adventure
 }
 
 export type FirehoseSchema = {
@@ -101,9 +102,40 @@ export type QuestingPartyMember = {
   party_id: string
   character: string
 }
+
 export type QuestingPartyInvite = {
   party_id: string
   character: string
   invite_id: string
   status: number
+}
+
+export type QuestingDecisionChoice = {
+  party_id: string
+  choice: string
+}
+
+export type QuestingDecisionVote = {
+  party_id: string
+  character: string
+  decision: string
+  vote: string
+}
+
+export type QuestionDecision = {
+  party_id: string
+  decision: string
+}
+
+export type Adventure = {
+  adventure_id: string
+  uri: string
+  cid: string
+  status: string
+}
+
+export type AdventureAction = {
+  adventure_id: string
+  uri: string
+  cid: string
 }
